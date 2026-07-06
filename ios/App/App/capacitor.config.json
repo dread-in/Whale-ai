@@ -1,0 +1,8 @@
+{
+	"appId": "com.example.voiceassistant",
+	"appName": "Voice Assistant UI",
+	"webDir": "dist",
+	"packageClassList": [
+		"PreferencesPlugin"
+	]
+}
