@@ -34,18 +34,15 @@ jobs:
         distribution: 'zulu'
         java-version: '17'
 
-    - name: Setup Gradle
-      uses: gradle/actions/setup-gradle@v4
-      with:
-        gradle-version: '8.2.1'
-
     - name: Sync Capacitor
       run: npx cap sync android
 
     - name: Build Debug APK
       run: |
         cd android
-        gradle assembleDebug
+        rm -f gradle/wrapper/gradle-wrapper.jar
+        gradle wrapper --gradle-version 8.2.1
+        ./gradlew assembleDebug
 
     - name: Upload APK Artifact
       uses: actions/upload-artifact@v4
