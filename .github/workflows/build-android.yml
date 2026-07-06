@@ -3,14 +3,23 @@ name: Build Android APK
 on:
   push:
     branches: [ main, master ]
+    tags:
+      - 'v*' # Trigger on tags starting with v (e.g., v1.0.0)
   pull_request:
     branches: [ main, master ]
-  workflow_dispatch: # Allows manual triggering from the GitHub Actions tab
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: 'Create release with tag (leave empty for no release, e.g., v1.0.1)'
+        required: false
+        type: string
 
 jobs:
   build-android:
     name: Build Android App
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
 
     steps:
     - name: Checkout Source Code
@@ -54,3 +63,16 @@ jobs:
         name: whale-ai-debug-apk
         path: android/app/build/outputs/apk/debug/app-debug.apk
         retention-days: 7
+
+    - name: Create GitHub Release
+      uses: softprops/action-gh-release@v2
+      if: startsWith(github.ref, 'refs/tags/') || github.event.inputs.release_tag != ''
+      with:
+        tag_name: ${{ github.event.inputs.release_tag || github.ref_name }}
+        name: Release ${{ github.event.inputs.release_tag || github.ref_name }}
+        target_commitish: ${{ github.sha }}
+        files: android/app/build/outputs/apk/debug/app-debug.apk
+        draft: false
+        prerelease: false
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
