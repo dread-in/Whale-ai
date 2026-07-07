@@ -2,6 +2,8 @@ import React, { useState, useEffect, useRef } from 'react';
 import WebGLBackground from './WebGLBackground';
 import ReactMarkdown from 'react-markdown';
 import { Preferences } from '@capacitor/preferences';
+import { SpeechRecognition } from '@capacitor-community/speech-recognition';
+import { Capacitor } from '@capacitor/core';
 
 type Message = {
     role: 'user' | 'model';
@@ -84,49 +86,62 @@ export default function App() {
 
   useEffect(() => {
     try {
-      const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-      if (SpeechRecognition) {
-        const recognition = new SpeechRecognition();
-        recognition.continuous = true;
-        recognition.interimResults = true;
+      if (Capacitor.isNativePlatform()) {
+        SpeechRecognition.requestPermissions();
         
-        recognition.onresult = (event: any) => {
-          let completeFinal = '';
-          let completeInterim = '';
-          
-          for (let i = 0; i < event.results.length; ++i) {
-            if (event.results[i].isFinal) {
-              completeFinal += event.results[i][0].transcript;
-            } else {
-              completeInterim += event.results[i][0].transcript;
-            }
-          }
-          
-          transcriptRef.current = completeFinal.trim();
-          
-          if (completeFinal || completeInterim) {
+        SpeechRecognition.addListener('partialResults', (data: any) => {
+          if (data.matches && data.matches.length > 0) {
+            const transcript = data.matches[0];
+            transcriptRef.current = transcript;
             setTitleContent(
               <>
-                <span className="text-[#2d2d2d] transition-colors duration-300">{completeFinal}</span>
-                <span className="text-[#888888] opacity-50 transition-colors duration-300">{completeInterim}</span>
+                <span className="text-[#2d2d2d] transition-colors duration-300">{transcript}</span>
               </>
             );
           }
-        };
+        });
+      } else {
+        const SpeechRec = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+        if (SpeechRec) {
+          const recognition = new SpeechRec();
+          recognition.continuous = true;
+          recognition.interimResults = true;
+          
+          recognition.onresult = (event: any) => {
+            let completeFinal = '';
+            let completeInterim = '';
+            
+            for (let i = 0; i < event.results.length; ++i) {
+              if (event.results[i].isFinal) {
+                completeFinal += event.results[i][0].transcript;
+              } else {
+                completeInterim += event.results[i][0].transcript;
+              }
+            }
+            
+            transcriptRef.current = completeFinal.trim() || completeInterim.trim();
+            
+            if (completeFinal || completeInterim) {
+              setTitleContent(
+                <>
+                  <span className="text-[#2d2d2d] transition-colors duration-300">{completeFinal}</span>
+                  <span className="text-[#888888] opacity-50 transition-colors duration-300">{completeInterim}</span>
+                </>
+              );
+            }
+          };
 
-        recognition.onend = () => {
-           // We will handle stopping in the toggle itself, but if it stops naturally,
-           // we can just let it be or force stop it. We need a way to trigger the end.
-           // Setting a global event or calling a ref function.
-           if ((window as any).handleSpeechEnd) {
-             (window as any).handleSpeechEnd();
-           }
-        };
-        
-        recognitionRef.current = recognition;
+          recognition.onend = () => {
+             if ((window as any).handleSpeechEnd) {
+               (window as any).handleSpeechEnd();
+             }
+          };
+          
+          recognitionRef.current = recognition;
+        }
       }
     } catch (e) {
-      console.log("Web Speech API not supported.");
+      console.log("Speech API not supported.", e);
     }
   }, []);
 
@@ -173,33 +188,56 @@ export default function App() {
     }
   }, [simStep]);
 
-  const startRecording = () => {
+  const startRecording = async () => {
     setIsRecording(true);
     transcriptRef.current = '';
     setTitleContent(<span className="text-[#888888] opacity-50 font-semibold transition-colors duration-300">Listening...</span>);
     
-    if (recognitionRef.current) {
+    if (Capacitor.isNativePlatform()) {
       try {
-        recognitionRef.current.start();
-      } catch (e: any) {
+        await SpeechRecognition.start({
+          language: "en-US",
+          maxResults: 1,
+          prompt: "Say something",
+          partialResults: true,
+          popup: false,
+        });
+      } catch (e) {
         console.warn("Speech API Error:", e);
-        if (e.name !== 'InvalidStateError') {
-          setSimStep(0);
-        }
+        setSimStep(0);
       }
     } else {
-      setSimStep(0);
+      if (recognitionRef.current) {
+        try {
+          recognitionRef.current.start();
+        } catch (e: any) {
+          console.warn("Speech API Error:", e);
+          if (e.name !== 'InvalidStateError') {
+            setSimStep(0);
+          }
+        }
+      } else {
+        setSimStep(0);
+      }
     }
   };
 
-  const stopRecording = () => {
+  const stopRecording = async () => {
     setIsRecording(false);
     
-    if (recognitionRef.current) {
+    if (Capacitor.isNativePlatform()) {
       try {
-        recognitionRef.current.stop();
+        await SpeechRecognition.stop();
       } catch (e) {
-         // ignore
+        // ignore
+      }
+    } else {
+      if (recognitionRef.current) {
+        try {
+          recognitionRef.current.stop();
+        } catch (e) {
+           // ignore
+        }
       }
     }
     
@@ -450,7 +488,10 @@ export default function App() {
           </svg>
         </button>
 
-        <div className="absolute left-1/2 transform -translate-x-1/2 text-xl font-bold tracking-widest text-[#2d2d2d] uppercase">
+        <div className="absolute left-1/2 transform -translate-x-1/2 text-xl font-bold tracking-widest text-[#2d2d2d] uppercase flex items-center gap-2">
+          <svg className="w-6 h-6" viewBox="0 0 24 24" fill="currentColor">
+            <path d="M12 2c2.2 0 4 1.8 4 4 0 .5-.1 1-.3 1.4.9 1.1 1.9 2.5 2.6 4.6.9.3 1.7 1 1.7 2v4c0 1.1-.9 2-2 2H6c-1.1 0-2-.9-2-2v-4c0-1 .8-1.7 1.7-2 .7-2.1 1.7-3.5 2.6-4.6-.2-.4-.3-.9-.3-1.4 0-2.2 1.8-4 4-4m0 2c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2z"/>
+          </svg>
           Whale
         </div>
 

@@ -27,38 +27,68 @@ var import_path = __toESM(require("path"), 1);
 var import_vite = require("vite");
 var import_genai = require("@google/genai");
 var import_cors = __toESM(require("cors"), 1);
+var import_openai = __toESM(require("openai"), 1);
 async function startServer() {
   const app = (0, import_express.default)();
   const PORT = 3e3;
   app.use(import_express.default.json());
   app.use((0, import_cors.default)());
-  const ai = new import_genai.GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+  const USE_GEMINI = process.env.GEMINI === "true";
+  const ai = new import_genai.GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || "dummy" });
+  const openai = new import_openai.default({
+    apiKey: "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",
+    baseURL: "https://integrate.api.nvidia.com/v1"
+  });
   app.post("/api/chat", async (req, res) => {
     try {
       const { history, message } = req.body;
-      const contents = history.map((msg) => ({
-        role: msg.role === "user" ? "user" : "model",
-        parts: [{ text: msg.text }]
-      }));
-      contents.push({
-        role: "user",
-        parts: [{ text: message }]
-      });
       res.setHeader("Content-Type", "text/event-stream");
       res.setHeader("Cache-Control", "no-cache");
       res.setHeader("Connection", "keep-alive");
-      const responseStream = await ai.models.generateContentStream({
-        model: "gemini-2.5-flash",
-        config: {
-          systemInstruction: "You are an AI named Whale. You provide clear, aesthetic, and concise answers. Always use markdown formatting, especially for code blocks, bold text, and highlights, so the frontend can parse and display it beautifully."
-        },
-        contents
-      });
-      for await (const chunk of responseStream) {
-        if (chunk.text) {
-          res.write(`data: ${JSON.stringify({ text: chunk.text })}
+      if (USE_GEMINI) {
+        const contents = history.map((msg) => ({
+          role: msg.role === "user" ? "user" : "model",
+          parts: [{ text: msg.text }]
+        }));
+        contents.push({
+          role: "user",
+          parts: [{ text: message }]
+        });
+        const responseStream = await ai.models.generateContentStream({
+          model: "gemini-2.5-flash",
+          config: {
+            systemInstruction: "You are an AI named Whale. You provide clear, aesthetic, and concise answers. Always use markdown formatting, especially for code blocks, bold text, and highlights, so the frontend can parse and display it beautifully."
+          },
+          contents
+        });
+        for await (const chunk of responseStream) {
+          if (chunk.text) {
+            res.write(`data: ${JSON.stringify({ text: chunk.text })}
 
 `);
+          }
+        }
+      } else {
+        const messages = [
+          { role: "system", content: "You are an AI named Whale. You provide clear, aesthetic, and concise answers. Always use markdown formatting." },
+          ...history.map((msg) => ({
+            role: msg.role === "user" ? "user" : "assistant",
+            content: msg.text
+          })),
+          { role: "user", content: message }
+        ];
+        const stream = await openai.chat.completions.create({
+          model: "meta/llama-3.1-70b-instruct",
+          messages,
+          stream: true,
+          max_tokens: 1024
+        });
+        for await (const chunk of stream) {
+          if (chunk.choices[0]?.delta?.content) {
+            res.write(`data: ${JSON.stringify({ text: chunk.choices[0].delta.content })}
+
+`);
+          }
         }
       }
       res.write("data: [DONE]\n\n");
@@ -74,13 +104,22 @@ async function startServer() {
   app.post("/api/title", async (req, res) => {
     try {
       const { message } = req.body;
-      const response = await ai.models.generateContent({
-        model: "gemini-2.5-flash",
-        contents: [
-          { role: "user", parts: [{ text: `Generate a short title (2-4 words) for a chat that starts with this message: "${message}". Do not use quotes.` }] }
-        ]
-      });
-      res.json({ title: response.text.trim() });
+      if (USE_GEMINI) {
+        const response = await ai.models.generateContent({
+          model: "gemini-2.5-flash",
+          contents: [
+            { role: "user", parts: [{ text: `Generate a short title (2-4 words) for a chat that starts with this message: "${message}". Do not use quotes.` }] }
+          ]
+        });
+        res.json({ title: response.text.trim() });
+      } else {
+        const response = await openai.chat.completions.create({
+          model: "meta/llama-3.1-70b-instruct",
+          messages: [{ role: "user", content: `Generate a short title (2-4 words) for a chat that starts with this message: "${message}". Do not use quotes.` }],
+          max_tokens: 10
+        });
+        res.json({ title: response.choices[0].message.content?.trim() });
+      }
     } catch (error) {
       console.error("Title API error:", error);
       res.status(500).json({ error: "Failed to generate title" });
